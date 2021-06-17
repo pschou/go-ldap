@@ -1,6 +1,36 @@
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+//
+// File contains Modify functionality
+//
+// https://tools.ietf.org/html/rfc4511
+//
+// ModifyRequest ::= [APPLICATION 6] SEQUENCE {
+//      object          LDAPDN,
+//      changes         SEQUENCE OF change SEQUENCE {
+//           operation       ENUMERATED {
+//                add     (0),
+//                delete  (1),
+//                replace (2),
+//                ...  },
+//           modification    PartialAttribute } }
+//
+// PartialAttribute ::= SEQUENCE {
+//      type       AttributeDescription,
+//      vals       SET OF value AttributeValue }
+//
+// AttributeDescription ::= LDAPString
+//                         -- Constrained to <attributedescription>
+//                         -- [RFC4512]
+//
+// AttributeValue ::= OCTET STRING
+//
+
 package ldap
 
 import (
+	"errors"
 	"log"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
@@ -8,10 +38,9 @@ import (
 
 // Change operation choices
 const (
-	AddAttribute       = 0
-	DeleteAttribute    = 1
-	ReplaceAttribute   = 2
-	IncrementAttribute = 3 // (https://tools.ietf.org/html/rfc4525)
+	AddAttribute     = 0
+	DeleteAttribute  = 1
+	ReplaceAttribute = 2
 )
 
 // PartialAttribute for a ModifyRequest as defined in https://tools.ietf.org/html/rfc4511
@@ -33,100 +62,109 @@ func (p *PartialAttribute) encode() *ber.Packet {
 	return seq
 }
 
-// Change for a ModifyRequest as defined in https://tools.ietf.org/html/rfc4511
-type Change struct {
-	// Operation is the type of change to be made
-	Operation uint
-	// Modification is the attribute to be modified
-	Modification PartialAttribute
-}
-
-func (c *Change) encode() *ber.Packet {
-	change := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Change")
-	change.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, uint64(c.Operation), "Operation"))
-	change.AppendChild(c.Modification.encode())
-	return change
-}
-
 // ModifyRequest as defined in https://tools.ietf.org/html/rfc4511
 type ModifyRequest struct {
 	// DN is the distinguishedName of the directory entry to modify
 	DN string
-	// Changes contain the attributes to modify
-	Changes []Change
-	// Controls hold optional controls to send with the request
-	Controls []Control
+	// AddAttributes contain the attributes to add
+	AddAttributes []PartialAttribute
+	// DeleteAttributes contain the attributes to delete
+	DeleteAttributes []PartialAttribute
+	// ReplaceAttributes contain the attributes to replace
+	ReplaceAttributes []PartialAttribute
 }
 
-// Add appends the given attribute to the list of changes to be made
-func (req *ModifyRequest) Add(attrType string, attrVals []string) {
-	req.appendChange(AddAttribute, attrType, attrVals)
+// Add inserts the given attribute to the list of attributes to add
+func (m *ModifyRequest) Add(attrType string, attrVals []string) {
+	m.AddAttributes = append(m.AddAttributes, PartialAttribute{Type: attrType, Vals: attrVals})
 }
 
-// Delete appends the given attribute to the list of changes to be made
-func (req *ModifyRequest) Delete(attrType string, attrVals []string) {
-	req.appendChange(DeleteAttribute, attrType, attrVals)
+// Delete inserts the given attribute to the list of attributes to delete
+func (m *ModifyRequest) Delete(attrType string, attrVals []string) {
+	m.DeleteAttributes = append(m.DeleteAttributes, PartialAttribute{Type: attrType, Vals: attrVals})
 }
 
-// Replace appends the given attribute to the list of changes to be made
-func (req *ModifyRequest) Replace(attrType string, attrVals []string) {
-	req.appendChange(ReplaceAttribute, attrType, attrVals)
+// Replace inserts the given attribute to the list of attributes to replace
+func (m *ModifyRequest) Replace(attrType string, attrVals []string) {
+	m.ReplaceAttributes = append(m.ReplaceAttributes, PartialAttribute{Type: attrType, Vals: attrVals})
 }
 
-// Increment appends the given attribute to the list of changes to be made
-func (req *ModifyRequest) Increment(attrType string, attrVal string) {
-	req.appendChange(IncrementAttribute, attrType, []string{attrVal})
-}
-
-func (req *ModifyRequest) appendChange(operation uint, attrType string, attrVals []string) {
-	req.Changes = append(req.Changes, Change{operation, PartialAttribute{Type: attrType, Vals: attrVals}})
-}
-
-func (req *ModifyRequest) appendTo(envelope *ber.Packet) error {
-	pkt := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationModifyRequest, nil, "Modify Request")
-	pkt.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, req.DN, "DN"))
+func (m ModifyRequest) encode() *ber.Packet {
+	request := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationModifyRequest, nil, "Modify Request")
+	request.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, m.DN, "DN"))
 	changes := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Changes")
-	for _, change := range req.Changes {
-		changes.AppendChild(change.encode())
+	for _, attribute := range m.AddAttributes {
+		change := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Change")
+		change.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, uint64(AddAttribute), "Operation"))
+		change.AppendChild(attribute.encode())
+		changes.AppendChild(change)
 	}
-	pkt.AppendChild(changes)
-
-	envelope.AppendChild(pkt)
-	if len(req.Controls) > 0 {
-		envelope.AppendChild(encodeControls(req.Controls))
+	for _, attribute := range m.DeleteAttributes {
+		change := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Change")
+		change.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, uint64(DeleteAttribute), "Operation"))
+		change.AppendChild(attribute.encode())
+		changes.AppendChild(change)
 	}
-
-	return nil
+	for _, attribute := range m.ReplaceAttributes {
+		change := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Change")
+		change.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, uint64(ReplaceAttribute), "Operation"))
+		change.AppendChild(attribute.encode())
+		changes.AppendChild(change)
+	}
+	request.AppendChild(changes)
+	return request
 }
 
 // NewModifyRequest creates a modify request for the given DN
-func NewModifyRequest(dn string, controls []Control) *ModifyRequest {
+func NewModifyRequest(
+	dn string,
+) *ModifyRequest {
 	return &ModifyRequest{
-		DN:       dn,
-		Controls: controls,
+		DN: dn,
 	}
 }
 
 // Modify performs the ModifyRequest
 func (l *Conn) Modify(modifyRequest *ModifyRequest) error {
-	msgCtx, err := l.doRequest(modifyRequest)
+	packet := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
+	packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
+	packet.AppendChild(modifyRequest.encode())
+
+	l.Debug.PrintPacket(packet)
+
+	msgCtx, err := l.sendMessage(packet)
 	if err != nil {
 		return err
 	}
 	defer l.finishMessage(msgCtx)
 
-	packet, err := l.readPacket(msgCtx)
+	l.Debug.Printf("%d: waiting for response", msgCtx.id)
+	packetResponse, ok := <-msgCtx.responses
+	if !ok {
+		return NewError(ErrorNetwork, errors.New("ldap: response channel closed"))
+	}
+	packet, err = packetResponse.ReadPacket()
+	l.Debug.Printf("%d: got response %p", msgCtx.id, packet)
 	if err != nil {
 		return err
 	}
 
-	if packet.Children[1].Tag == ApplicationModifyResponse {
-		err := GetLDAPError(packet)
-		if err != nil {
+	if l.Debug {
+		if err := addLDAPDescriptions(packet); err != nil {
 			return err
+		}
+		ber.PrintPacket(packet)
+	}
+
+	if packet.Children[1].Tag == ApplicationModifyResponse {
+		resultCode, resultDescription := getLDAPResultCode(packet)
+		if resultCode != 0 {
+			return NewError(resultCode, errors.New(resultDescription))
 		}
 	} else {
 		log.Printf("Unexpected Response: %d", packet.Children[1].Tag)
 	}
+
+	l.Debug.Printf("%d: returning", msgCtx.id)
 	return nil
 }

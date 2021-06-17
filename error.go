@@ -192,6 +192,24 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("LDAP Result Code %d %q: %s", e.ResultCode, LDAPResultCodeMap[e.ResultCode], e.Err.Error())
 }
 
+// GetLDAPResultCode gets the result and description out of a BER packet representing a LDAPResult
+func getLDAPResultCode(packet *ber.Packet) (code uint16, description string) {
+	if packet == nil {
+		return ErrorUnexpectedResponse, "Empty packet"
+	} else if len(packet.Children) >= 2 {
+		response := packet.Children[1]
+		if response == nil {
+			return ErrorUnexpectedResponse, "Empty response in packet"
+		}
+		if response.ClassType == ber.ClassApplication && response.TagType == ber.TypeConstructed && len(response.Children) >= 3 {
+			// Children[1].Children[2] is the diagnosticMessage which is guaranteed to exist as seen here: https://tools.ietf.org/html/rfc4511#section-4.1.9
+			return uint16(response.Children[0].Value.(int64)), response.Children[2].Value.(string)
+		}
+	}
+
+	return ErrorNetwork, "Invalid packet format"
+}
+
 // GetLDAPError creates an Error out of a BER packet representing a LDAPResult
 // The return is an error object. It can be casted to a Error structure.
 // This function returns nil if resultCode in the LDAPResult sequence is success(0).

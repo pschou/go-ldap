@@ -15,6 +15,13 @@ func (debug *debugging) Enable(b bool) {
 	*debug = debugging(b)
 }
 
+// Println writes debug output
+func (debug debugging) Println(args ...interface{}) {
+	if debug {
+		log.Println(args...)
+	}
+}
+
 // Printf writes debug output.
 func (debug debugging) Printf(format string, args ...interface{}) {
 	if debug {

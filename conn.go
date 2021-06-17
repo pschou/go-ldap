@@ -499,7 +499,7 @@ func (l *Conn) processMessages() {
 				if msgCtx, ok := l.messageContexts[message.MessageID]; ok {
 					msgCtx.sendResponse(&PacketResponse{message.Packet, nil})
 				} else {
-					log.Printf("Received unexpected message %d, %v", message.MessageID, l.IsClosing())
+					l.Debug.Printf("Received unexpected message %d, %v", message.MessageID, l.IsClosing())
 					l.Debug.PrintPacket(message.Packet)
 				}
 			case MessageTimeout:

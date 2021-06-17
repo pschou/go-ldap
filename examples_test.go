@@ -152,7 +152,7 @@ func ExampleConn_Modify() {
 	defer l.Close()
 
 	// Add a description, and replace the mail attributes
-	modify := NewModifyRequest("cn=user,dc=example,dc=com", nil)
+	modify := NewModifyRequest("cn=user,dc=example,dc=com")
 	modify.Add("description", []string{"An example user"})
 	modify.Replace("mail", []string{"user@example.org"})
 
